@@ -46,6 +46,13 @@ uavcan::UtcTime getUtc();
 void adjustUtc(uavcan::UtcDuration adjustment);
 
 /**
+ * Performs UTC phase and frequency adjustment from usec timestamp.
+ * The UTC time will be zero until first adjustment has been performed.
+ * This function is not thread safe
+ */
+void adjustUtcAbsoluteFromISR(uavcan::uint64_t time_usec);
+
+/**
  * UTC clock synchronization parameters
  */
 struct UtcSyncParams

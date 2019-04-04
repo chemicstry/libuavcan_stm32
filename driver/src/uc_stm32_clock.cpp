@@ -237,34 +237,28 @@ uavcan::uint64_t getUtcUSecFromCanInterrupt()
     return utc_set ? sampleUtcFromCriticalSection() : 0;
 }
 
-uavcan::MonotonicTime getMonotonic()
+static uavcan::uint64_t sampleMonotonicFromCriticalSection()
 {
-    uavcan::uint64_t usec = 0;
-    // Scope Critical section
-    {
-        CriticalSectionLocker locker;
-
-        volatile uavcan::uint64_t time = time_mono;
+    volatile uavcan::uint64_t time = time_mono;
 
 # if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL || UAVCAN_STM32_FREERTOS
 
-        volatile uavcan::uint32_t cnt = TIMX->CNT;
-        if (TIMX->SR & TIM_SR_UIF)
-        {
-            cnt = TIMX->CNT;
+    volatile uavcan::uint32_t cnt = TIMX->CNT;
+    if (TIMX->SR & TIM_SR_UIF)
+    {
+        cnt = TIMX->CNT;
 # endif
 
 # if UAVCAN_STM32_NUTTX
 
-        volatile uavcan::uint32_t cnt = getreg16(TMR_REG(STM32_BTIM_CNT_OFFSET));
+    volatile uavcan::uint32_t cnt = getreg16(TMR_REG(STM32_BTIM_CNT_OFFSET));
 
-        if (getreg16(TMR_REG(STM32_BTIM_SR_OFFSET)) & BTIM_SR_UIF)
-        {
-            cnt = getreg16(TMR_REG(STM32_BTIM_CNT_OFFSET));
+    if (getreg16(TMR_REG(STM32_BTIM_SR_OFFSET)) & BTIM_SR_UIF)
+    {
+        cnt = getreg16(TMR_REG(STM32_BTIM_CNT_OFFSET));
 # endif
-            time += USecPerOverflow;
-        }
-        usec = time + cnt;
+        time += USecPerOverflow;
+    }
 
 # ifndef NDEBUG
     static uavcan::uint64_t prev_usec = 0;      // Self-test
@@ -272,7 +266,17 @@ uavcan::MonotonicTime getMonotonic()
     (void)prev_usec;
     prev_usec = usec;
 # endif
-   } // End Scope Critical section
+
+    return time + cnt;
+}
+
+uavcan::MonotonicTime getMonotonic()
+{
+    uavcan::uint64_t usec = 0;
+    {
+        CriticalSectionLocker locker;
+        usec = sampleMonotonicFromCriticalSection();
+    }
 
    return uavcan::MonotonicTime::fromUSec(usec);
 }
@@ -297,9 +301,8 @@ static float lowpass(float xold, float xnew, float corner, float dt)
     return (dt * xnew + tau * xold) / (dt + tau);
 }
 
-static void updateRatePID(uavcan::UtcDuration adjustment)
+static void updateRatePID(uavcan::MonotonicTime ts, uavcan::UtcDuration adjustment)
 {
-    const uavcan::MonotonicTime ts = getMonotonic();
     const float dt = float((ts - prev_utc_adj_at).toUSec()) / 1e6F;
     prev_utc_adj_at = ts;
     const float adj_usec = float(adjustment.toUSec());
@@ -376,7 +379,45 @@ void adjustUtc(uavcan::UtcDuration adjustment)
     }
     else
     {
-        updateRatePID(adjustment);
+        updateRatePID(getMonotonic(), adjustment);
+
+        if (!utc_locked)
+        {
+            utc_locked =
+                (std::abs(utc_rel_rate_ppm) < utc_sync_params.lock_thres_rate_ppm) &&
+                (std::abs(utc_prev_adj) < float(utc_sync_params.lock_thres_offset.toUSec()));
+        }
+    }
+}
+
+void adjustUtcAbsoluteFromISR(uavcan::uint64_t time_usec)
+{
+    UAVCAN_ASSERT(initialized);
+
+    uavcan::int64_t now = sampleUtcFromCriticalSection();
+    uavcan::int64_t adj_usec = uavcan::int64_t(time_usec)-now;
+
+    if (std::abs(adj_usec) > utc_sync_params.min_jump.toUSec() || !utc_set)
+    {
+        if ((adj_usec < 0) && uavcan::uint64_t(-adj_usec) > time_utc)
+        {
+            time_utc = 1;
+        }
+        else
+        {
+            time_utc = uavcan::uint64_t(uavcan::int64_t(time_utc) + adj_usec);
+        }
+
+        utc_set = true;
+        utc_locked = false;
+        utc_jump_cnt++;
+        utc_prev_adj = 0;
+        utc_rel_rate_ppm = 0;
+    }
+    else
+    {
+        uint64_t mono_us = sampleMonotonicFromCriticalSection();
+        updateRatePID(uavcan::MonotonicTime::fromUSec(mono_us), uavcan::UtcDuration::fromUSec(adj_usec));
 
         if (!utc_locked)
         {
