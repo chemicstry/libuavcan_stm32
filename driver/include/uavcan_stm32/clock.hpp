@@ -96,6 +96,12 @@ bool isUtcLocked();
 UtcSyncParams getUtcSyncParams();
 void setUtcSyncParams(const UtcSyncParams& params);
 
+/**
+ * Sets the precise UTC time for the next PPS. Used for time sync.
+ * This function is thread safe.
+ */
+void setUtcNextPPS(uavcan::uint64_t time);
+
 }
 
 /**

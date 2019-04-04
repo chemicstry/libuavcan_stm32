@@ -38,3 +38,11 @@
 // In this case the clock driver should be implemented by the application
 # define UAVCAN_STM32_TIMER_NUMBER 0
 #endif
+
+/**
+ * Use hardware timer input capture to sync clock from external PPS signal
+ * Valid values are 1-4 (CH1 to CH4), 0 means disabled.
+ */
+#ifndef UAVCAN_STM32_TIMER_PPS_CHANNEL
+# define UAVCAN_STM32_TIMER_PPS_CHANNEL 0
+#endif
