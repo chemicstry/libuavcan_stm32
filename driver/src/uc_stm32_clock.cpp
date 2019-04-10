@@ -46,6 +46,40 @@
 #  error "This UAVCAN_STM32_TIMER_NUMBER is not supported yet"
 # endif
 
+# if UAVCAN_STM32_TIMER_PPS_CHANNEL == 1
+#  define TIM_DIER_CCXIE TIM_DIER_CC1IE
+#  define TIM_CCMR1 TIM_CCMR1_CC1S_0
+#  define TIM_CCMR2 0
+#  define TIM_CCER TIM_CCER_CC1E
+#  define TIM_SR_CCXIF TIM_SR_CC1IF
+# elif UAVCAN_STM32_TIMER_PPS_CHANNEL == 2
+#  define TIM_DIER_CCXIE TIM_DIER_CC2IE
+#  define TIM_CCMR1 TIM_CCMR1_CC2S_0
+#  define TIM_CCMR2 0
+#  define TIM_CCER TIM_CCER_CC2E
+#  define TIM_SR_CCXIF TIM_SR_CC2IF
+# elif UAVCAN_STM32_TIMER_PPS_CHANNEL == 3
+#  define TIM_DIER_CCXIE TIM_DIER_CC3IE
+#  define TIM_CCMR1 0
+#  define TIM_CCMR2 TIM_CCMR2_CC3S_0
+#  define TIM_CCER TIM_CCER_CC3E
+#  define TIM_SR_CCXIF TIM_SR_CC3IF
+# elif UAVCAN_STM32_TIMER_PPS_CHANNEL == 4
+#  define TIM_DIER_CCXIE TIM_DIER_CC4IE
+#  define TIM_CCMR1 0
+#  define TIM_CCMR2 TIM_CCMR2_CC4S_0
+#  define TIM_CCER TIM_CCER_CC4E
+#  define TIM_SR_CCXIF TIM_SR_CC4IF
+# elif UAVCAN_STM32_TIMER_PPS_CHANNEL < 0 || UAVCAN_STM32_TIMER_PPS_CHANNEL > 4
+#  error "Invalid timer PPS capture channel"
+# else
+#  define TIM_DIER_CCXIE 0
+#  define TIM_CCMR1 0
+#  define TIM_CCMR2 0
+#  define TIM_CCER 0
+#  define TIM_SR_CCXIF 0
+# endif
+
 /**
  * UAVCAN_STM32_TIMX_INPUT_CLOCK can be used to manually override the auto-detected timer clock speed.
  * This is useful at least with certain versions of ChibiOS which do not support the bit
@@ -87,10 +121,11 @@ float utc_rel_rate_ppm = 0;
 float utc_rel_rate_error_integral = 0;
 uavcan::int32_t utc_accumulated_correction_nsec = 0;
 uavcan::int32_t utc_correction_nsec_per_overflow = 0;
-uavcan::MonotonicTime prev_utc_adj_at;
+uavcan::uint64_t prev_utc_adj_at;
 
 uavcan::uint64_t time_mono = 0;
 uavcan::uint64_t time_utc = 0;
+uavcan::uint64_t time_utc_next_pps = 0; // UTC time of the next PPS impulse
 
 }
 
@@ -140,10 +175,14 @@ void init()
     // Start the timer
     TIMX->ARR  = 0xFFFF;
     TIMX->PSC  = (TIMX_INPUT_CLOCK / 1000000) - 1;  // 1 tick == 1 microsecond
-    TIMX->CR1  = TIM_CR1_URS;
+    TIMX->CR1  = TIM_CR1_URS; // Generate update interrupt only by overflow
+    TIMX->CR2  = 0;
     TIMX->SR   = 0;
     TIMX->EGR  = TIM_EGR_UG;     // Reload immediately
-    TIMX->DIER = TIM_DIER_UIE;
+    TIMX->DIER = TIM_DIER_CCXIE | TIM_DIER_UIE; // Enable update and input capture interrupts
+    TIMX->CCMR1 = TIM_CCMR1; // Input capture mode
+    TIMX->CCMR2 = TIM_CCMR2;
+    TIMX->CCER = TIM_CCER; // Enable input capture
     TIMX->CR1  = TIM_CR1_CEN;    // Start
 
 # endif
@@ -301,11 +340,10 @@ static float lowpass(float xold, float xnew, float corner, float dt)
     return (dt * xnew + tau * xold) / (dt + tau);
 }
 
-static void updateRatePID(uavcan::MonotonicTime ts, uavcan::UtcDuration adjustment)
+static void updateRatePID(uavcan::uint64_t ts, uavcan::int64_t adj_usec)
 {
-    const float dt = float((ts - prev_utc_adj_at).toUSec()) / 1e6F;
+    const float dt = float(ts - prev_utc_adj_at) / 1e6F;
     prev_utc_adj_at = ts;
-    const float adj_usec = float(adjustment.toUSec());
 
     /*
      * Target relative rate in PPM
@@ -350,52 +388,9 @@ static void updateRatePID(uavcan::MonotonicTime ts, uavcan::UtcDuration adjustme
 // total_rate_correction_ppm);
 }
 
-void adjustUtc(uavcan::UtcDuration adjustment)
-{
-    MutexLocker mlocker(mutex);
-    UAVCAN_ASSERT(initialized);
-
-    if (adjustment.getAbs() > utc_sync_params.min_jump || !utc_set)
-    {
-        const uavcan::int64_t adj_usec = adjustment.toUSec();
-
-        {
-            CriticalSectionLocker locker;
-            if ((adj_usec < 0) && uavcan::uint64_t(-adj_usec) > time_utc)
-            {
-                time_utc = 1;
-            }
-            else
-            {
-                time_utc = uavcan::uint64_t(uavcan::int64_t(time_utc) + adj_usec);
-            }
-        }
-
-        utc_set = true;
-        utc_locked = false;
-        utc_jump_cnt++;
-        utc_prev_adj = 0;
-        utc_rel_rate_ppm = 0;
-    }
-    else
-    {
-        updateRatePID(getMonotonic(), adjustment);
-
-        if (!utc_locked)
-        {
-            utc_locked =
-                (std::abs(utc_rel_rate_ppm) < utc_sync_params.lock_thres_rate_ppm) &&
-                (std::abs(utc_prev_adj) < float(utc_sync_params.lock_thres_offset.toUSec()));
-        }
-    }
-}
-
-void adjustUtcAbsoluteFromISR(uavcan::uint64_t time_usec)
+static void adjustUtcFromCriticalSection(uavcan::uint64_t ts, uavcan::int64_t adj_usec)
 {
     UAVCAN_ASSERT(initialized);
-
-    uavcan::int64_t now = sampleUtcFromCriticalSection();
-    uavcan::int64_t adj_usec = uavcan::int64_t(time_usec)-now;
 
     if (std::abs(adj_usec) > utc_sync_params.min_jump.toUSec() || !utc_set)
     {
@@ -416,8 +411,7 @@ void adjustUtcAbsoluteFromISR(uavcan::uint64_t time_usec)
     }
     else
     {
-        uint64_t mono_us = sampleMonotonicFromCriticalSection();
-        updateRatePID(uavcan::MonotonicTime::fromUSec(mono_us), uavcan::UtcDuration::fromUSec(adj_usec));
+        updateRatePID(ts, adj_usec);
 
         if (!utc_locked)
         {
@@ -426,6 +420,14 @@ void adjustUtcAbsoluteFromISR(uavcan::uint64_t time_usec)
                 (std::abs(utc_prev_adj) < float(utc_sync_params.lock_thres_offset.toUSec()));
         }
     }
+}
+
+void adjustUtc(uavcan::UtcDuration adjustment)
+{
+    MutexLocker mlocker(mutex);
+    UAVCAN_ASSERT(initialized);
+
+    adjustUtcFromCriticalSection(getMonotonic().toUSec(), adjustment.toUSec());
 }
 
 float getUtcRateCorrectionPPM()
@@ -458,6 +460,12 @@ void setUtcSyncParams(const UtcSyncParams& params)
     MutexLocker mlocker(mutex);
     // Add some sanity check
     utc_sync_params = params;
+}
+
+void setUtcNextPPS(uavcan::uint64_t time)
+{
+    MutexLocker mlocker(mutex);
+    time_utc_next_pps = time;
 }
 
 } // namespace clock
@@ -494,42 +502,58 @@ UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler)
 {
     UAVCAN_STM32_IRQ_PROLOGUE();
 
+    using namespace uavcan_stm32::clock;
+    UAVCAN_ASSERT(initialized);
+
+# if UAVCAN_STM32_TIMER_PPS_CHANNEL
+    // PPS input capture
+    if (TIMX->SR & TIM_SR_CCXIF) {
+        if (time_utc_next_pps)
+        {
+            // Get local UTC time at the time of capture
+            uavcan::uint64_t pps_time = time_utc + TIMX->CCR[UAVCAN_STM32_TIMER_PPS_CHANNEL-1];
+            uavcan::uint64_t mono_us = sampleMonotonicFromCriticalSection();
+            adjustUtcFromCriticalSection(mono_us, time_utc_next_pps - pps_time);
+            time_utc_next_pps = 0;
+        }
+    }
+# endif
+
+    if (TIMX->SR & TIM_SR_UIF) {
+        time_mono += USecPerOverflow;
+
+        if (utc_set)
+        {
+            time_utc += USecPerOverflow;
+            utc_accumulated_correction_nsec += utc_correction_nsec_per_overflow;
+            if (std::abs(utc_accumulated_correction_nsec) >= 1000)
+            {
+                time_utc = uavcan::uint64_t(uavcan::int64_t(time_utc) + utc_accumulated_correction_nsec / 1000);
+                utc_accumulated_correction_nsec %= 1000;
+            }
+
+            // Correction decay - 1 nsec per 65536 usec
+            if (utc_correction_nsec_per_overflow > 0)
+            {
+                utc_correction_nsec_per_overflow--;
+            }
+            else if (utc_correction_nsec_per_overflow < 0)
+            {
+                utc_correction_nsec_per_overflow++;
+            }
+            else
+            {
+                ; // Zero
+            }
+        }
+    }
+
 # if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL || UAVCAN_STM32_FREERTOS
     TIMX->SR = 0;
 # endif
 # if UAVCAN_STM32_NUTTX
     putreg16(0, TMR_REG(STM32_BTIM_SR_OFFSET));
 # endif
-
-    using namespace uavcan_stm32::clock;
-    UAVCAN_ASSERT(initialized);
-
-    time_mono += USecPerOverflow;
-
-    if (utc_set)
-    {
-        time_utc += USecPerOverflow;
-        utc_accumulated_correction_nsec += utc_correction_nsec_per_overflow;
-        if (std::abs(utc_accumulated_correction_nsec) >= 1000)
-        {
-            time_utc = uavcan::uint64_t(uavcan::int64_t(time_utc) + utc_accumulated_correction_nsec / 1000);
-            utc_accumulated_correction_nsec %= 1000;
-        }
-
-        // Correction decay - 1 nsec per 65536 usec
-        if (utc_correction_nsec_per_overflow > 0)
-        {
-            utc_correction_nsec_per_overflow--;
-        }
-        else if (utc_correction_nsec_per_overflow < 0)
-        {
-            utc_correction_nsec_per_overflow++;
-        }
-        else
-        {
-            ; // Zero
-        }
-    }
 
     UAVCAN_STM32_IRQ_EPILOGUE();
 }
