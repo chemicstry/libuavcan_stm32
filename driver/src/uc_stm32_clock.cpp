@@ -299,13 +299,6 @@ static uavcan::uint64_t sampleMonotonicFromCriticalSection()
         time += USecPerOverflow;
     }
 
-# ifndef NDEBUG
-    static uavcan::uint64_t prev_usec = 0;      // Self-test
-    UAVCAN_ASSERT(prev_usec <= usec);
-    (void)prev_usec;
-    prev_usec = usec;
-# endif
-
     return time + cnt;
 }
 
@@ -316,6 +309,13 @@ uavcan::MonotonicTime getMonotonic()
         CriticalSectionLocker locker;
         usec = sampleMonotonicFromCriticalSection();
     }
+
+# ifndef NDEBUG
+    static uavcan::uint64_t prev_usec = 0;      // Self-test
+    UAVCAN_ASSERT(prev_usec <= usec);
+    (void)prev_usec;
+    prev_usec = usec;
+# endif
 
    return uavcan::MonotonicTime::fromUSec(usec);
 }
