@@ -46,39 +46,32 @@
 #  error "This UAVCAN_STM32_TIMER_NUMBER is not supported yet"
 # endif
 
-# if UAVCAN_STM32_TIMER_PPS_CHANNEL == 1
-#  define TIM_DIER_CCXIE TIM_DIER_CC1IE
-#  define TIM_CCMR1 TIM_CCMR1_CC1S_0
-#  define TIM_CCMR2 0
-#  define TIM_CCER TIM_CCER_CC1E
-#  define TIM_SR_CCXIF TIM_SR_CC1IF
-# elif UAVCAN_STM32_TIMER_PPS_CHANNEL == 2
-#  define TIM_DIER_CCXIE TIM_DIER_CC2IE
-#  define TIM_CCMR1 TIM_CCMR1_CC2S_0
-#  define TIM_CCMR2 0
-#  define TIM_CCER TIM_CCER_CC2E
-#  define TIM_SR_CCXIF TIM_SR_CC2IF
-# elif UAVCAN_STM32_TIMER_PPS_CHANNEL == 3
-#  define TIM_DIER_CCXIE TIM_DIER_CC3IE
-#  define TIM_CCMR1 0
-#  define TIM_CCMR2 TIM_CCMR2_CC3S_0
-#  define TIM_CCER TIM_CCER_CC3E
-#  define TIM_SR_CCXIF TIM_SR_CC3IF
-# elif UAVCAN_STM32_TIMER_PPS_CHANNEL == 4
-#  define TIM_DIER_CCXIE TIM_DIER_CC4IE
-#  define TIM_CCMR1 0
-#  define TIM_CCMR2 TIM_CCMR2_CC4S_0
-#  define TIM_CCER TIM_CCER_CC4E
-#  define TIM_SR_CCXIF TIM_SR_CC4IF
-# elif UAVCAN_STM32_TIMER_PPS_CHANNEL < 0 || UAVCAN_STM32_TIMER_PPS_CHANNEL > 4
-#  error "Invalid timer PPS capture channel"
-# else
-#  define TIM_DIER_CCXIE 0
-#  define TIM_CCMR1 0
-#  define TIM_CCMR2 0
-#  define TIM_CCER 0
-#  define TIM_SR_CCXIF 0
-# endif
+#define PPS_CHANNEL_MASK (ExternalEventChannels)(1 << (UAVCAN_STM32_TIMER_PPS_CHANNEL-1))
+
+// CH1
+# define TIM_CH1_DIER_CCXIE TIM_DIER_CC1IE
+# define TIM_CH1_CCMR1 TIM_CCMR1_CC1S_0
+# define TIM_CH1_CCMR2 0
+# define TIM_CH1_CCER TIM_CCER_CC1E
+# define TIM_CH1_SR_CCXIF TIM_SR_CC1IF
+// CH2
+# define TIM_CH2_DIER_CCXIE TIM_DIER_CC2IE
+# define TIM_CH2_CCMR1 TIM_CCMR1_CC2S_0
+# define TIM_CH2_CCMR2 0
+# define TIM_CH2_CCER TIM_CCER_CC2E
+# define TIM_CH2_SR_CCXIF TIM_SR_CC2IF
+// CH3
+# define TIM_CH3_DIER_CCXIE TIM_DIER_CC3IE
+# define TIM_CH3_CCMR1 0
+# define TIM_CH3_CCMR2 TIM_CCMR2_CC3S_0
+# define TIM_CH3_CCER TIM_CCER_CC3E
+# define TIM_CH3_SR_CCXIF TIM_SR_CC3IF
+// CH4
+# define TIM_CH4_DIER_CCXIE TIM_DIER_CC4IE
+# define TIM_CH4_CCMR1 0
+# define TIM_CH4_CCMR2 TIM_CCMR2_CC4S_0
+# define TIM_CH4_CCER TIM_CCER_CC4E
+# define TIM_CH4_SR_CCXIF TIM_SR_CC4IF
 
 /**
  * UAVCAN_STM32_TIMX_INPUT_CLOCK can be used to manually override the auto-detected timer clock speed.
@@ -127,6 +120,12 @@ uavcan::uint64_t time_mono = 0;
 uavcan::uint64_t time_utc = 0;
 uavcan::uint64_t time_utc_next_pps = 0; // UTC time of the next PPS impulse
 
+// External events
+ExternalEventChannels ext_evt_channels = EXT_EVENT_NONE;
+objects_fifo_t ext_evt_fifo;
+ExternalEvent ext_evt_fifo_buf[UAVCAN_STM32_EXTERNAL_EVENT_BUFFER_SIZE];
+msg_t ext_evt_fifo_msg[UAVCAN_STM32_EXTERNAL_EVENT_BUFFER_SIZE];
+
 }
 
 #if UAVCAN_STM32_BAREMETAL || UAVCAN_STM32_FREERTOS
@@ -148,6 +147,44 @@ static void nvicEnableVector(IRQn_Type irq,  uint8_t prio)
 }
 
 #endif
+
+// Initializes timer input capture based on channel mask
+void initExternalChannels(ExternalEventChannels channels)
+{
+    // Reset
+    TIMX->DIER &= ~(TIM_CH1_DIER_CCXIE|TIM_CH2_DIER_CCXIE|TIM_CH3_DIER_CCXIE|TIM_CH4_DIER_CCXIE);
+    TIMX->CCMR1 &= ~(TIM_CH1_CCMR1|TIM_CH2_CCMR1|TIM_CH3_CCMR1|TIM_CH4_CCMR1);
+    TIMX->CCMR2 &= ~(TIM_CH1_CCMR2|TIM_CH2_CCMR2|TIM_CH3_CCMR2|TIM_CH4_CCMR2);
+    TIMX->CCER &= ~(TIM_CH1_CCER|TIM_CH2_CCER|TIM_CH3_CCER|TIM_CH4_CCER);
+
+    if (channels & EXT_EVENT_CH1) {
+        TIMX->DIER |= TIM_CH1_DIER_CCXIE;
+        TIMX->CCMR1 |= TIM_CH1_CCMR1;
+        TIMX->CCMR2 |= TIM_CH1_CCMR2;
+        TIMX->CCER |= TIM_CH1_CCER;
+    }
+
+    if (channels & EXT_EVENT_CH2) {
+        TIMX->DIER |= TIM_CH2_DIER_CCXIE;
+        TIMX->CCMR1 |= TIM_CH2_CCMR1;
+        TIMX->CCMR2 |= TIM_CH2_CCMR2;
+        TIMX->CCER |= TIM_CH2_CCER;
+    }
+
+    if (channels & EXT_EVENT_CH3) {
+        TIMX->DIER |= TIM_CH3_DIER_CCXIE;
+        TIMX->CCMR1 |= TIM_CH3_CCMR1;
+        TIMX->CCMR2 |= TIM_CH3_CCMR2;
+        TIMX->CCER |= TIM_CH3_CCER;
+    }
+
+    if (channels & EXT_EVENT_CH4) {
+        TIMX->DIER |= TIM_CH4_DIER_CCXIE;
+        TIMX->CCMR1 |= TIM_CH4_CCMR1;
+        TIMX->CCMR2 |= TIM_CH4_CCMR2;
+        TIMX->CCER |= TIM_CH4_CCER;
+    }
+}
 
 void init()
 {
@@ -172,6 +209,9 @@ void init()
 #  error "No way, timer clock must be divisible by 1e6. FIXME!"
 # endif
 
+    // Initialize external event FIFO
+    chFifoObjectInit(&ext_evt_fifo, sizeof(ExternalEvent), UAVCAN_STM32_EXTERNAL_EVENT_BUFFER_SIZE, ext_evt_fifo_buf, ext_evt_fifo_msg);
+
     // Start the timer
     TIMX->ARR  = 0xFFFF;
     TIMX->PSC  = (TIMX_INPUT_CLOCK / 1000000) - 1;  // 1 tick == 1 microsecond
@@ -179,10 +219,11 @@ void init()
     TIMX->CR2  = 0;
     TIMX->SR   = 0;
     TIMX->EGR  = TIM_EGR_UG;     // Reload immediately
-    TIMX->DIER = TIM_DIER_CCXIE | TIM_DIER_UIE; // Enable update and input capture interrupts
-    TIMX->CCMR1 = TIM_CCMR1; // Input capture mode
-    TIMX->CCMR2 = TIM_CCMR2;
-    TIMX->CCER = TIM_CCER; // Enable input capture
+    TIMX->DIER = TIM_DIER_UIE; // Enable update and input capture interrupts
+
+    // enable input capture
+    initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK);
+
     TIMX->CR1  = TIM_CR1_CEN;    // Start
 
 # endif
@@ -468,6 +509,56 @@ void setUtcNextPPS(uavcan::uint64_t time)
     time_utc_next_pps = time;
 }
 
+void setExternalEventChannels(ExternalEventChannels channels)
+{
+    ext_evt_channels = channels;
+    initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK);
+}
+
+bool fetchExternalEvent(ExternalEvent *evt, sysinterval_t timeout)
+{
+    ExternalEvent* in_evt;
+    msg_t msg = chFifoReceiveObjectTimeout(&ext_evt_fifo, (void**)&in_evt, timeout);
+
+    if (msg == MSG_TIMEOUT)
+        return false;
+
+    // copy event to the supplied buffer
+    memcpy(evt, in_evt, sizeof(ExternalEvent));
+
+    // return object to the pool
+    chFifoReturnObject(&ext_evt_fifo, in_evt);
+
+    return true;
+}
+
+void handlePPSInterrupt(uavcan::uint64_t pps_time)
+{
+    if (time_utc_next_pps)
+    {
+        uavcan::uint64_t mono_us = sampleMonotonicFromCriticalSection();
+        adjustUtcFromCriticalSection(mono_us, time_utc_next_pps - pps_time);
+        time_utc_next_pps = 0;
+    }
+}
+
+void handleExternalEvent(uint8_t channel, uavcan::uint64_t time)
+{
+    chSysLockFromISR();
+
+    ExternalEvent* evt = (ExternalEvent*)chFifoTakeObjectI(&ext_evt_fifo);
+
+    if (evt) {
+        evt->utc = time;
+        evt->channel = channel;
+
+        // Send for processing
+        chFifoSendObjectI(&ext_evt_fifo, evt);
+    }
+
+    chSysUnlockFromISR();
+}
+
 } // namespace clock
 
 SystemClock& SystemClock::instance()
@@ -505,19 +596,34 @@ UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler)
     using namespace uavcan_stm32::clock;
     UAVCAN_ASSERT(initialized);
 
-# if UAVCAN_STM32_TIMER_PPS_CHANNEL
-    // PPS input capture
-    if (TIMX->SR & TIM_SR_CCXIF) {
-        if (time_utc_next_pps)
-        {
-            // Get local UTC time at the time of capture
-            uavcan::uint64_t pps_time = time_utc + TIMX->CCR[UAVCAN_STM32_TIMER_PPS_CHANNEL-1];
-            uavcan::uint64_t mono_us = sampleMonotonicFromCriticalSection();
-            adjustUtcFromCriticalSection(mono_us, time_utc_next_pps - pps_time);
-            time_utc_next_pps = 0;
-        }
+    if (TIMX->SR & TIM_CH1_SR_CCXIF) {
+        uavcan::uint64_t utc = time_utc + TIMX->CCR[0];
+        if (UAVCAN_STM32_TIMER_PPS_CHANNEL == 1)
+            handlePPSInterrupt(utc);
+        if (ext_evt_channels & EXT_EVENT_CH1)
+            handleExternalEvent(1, utc);
     }
-# endif
+    if (TIMX->SR & TIM_CH2_SR_CCXIF) {
+        uavcan::uint64_t utc = time_utc + TIMX->CCR[1];
+        if (UAVCAN_STM32_TIMER_PPS_CHANNEL == 2)
+            handlePPSInterrupt(utc);
+        if (ext_evt_channels & EXT_EVENT_CH2)
+            handleExternalEvent(2, utc);
+    }
+    if (TIMX->SR & TIM_CH3_SR_CCXIF) {
+        uavcan::uint64_t utc = time_utc + TIMX->CCR[2];
+        if (UAVCAN_STM32_TIMER_PPS_CHANNEL == 3)
+            handlePPSInterrupt(utc);
+        if (ext_evt_channels & EXT_EVENT_CH3)
+            handleExternalEvent(3, utc);
+    }
+    if (TIMX->SR & TIM_CH4_SR_CCXIF) {
+        uavcan::uint64_t utc = time_utc + TIMX->CCR[3];
+        if (UAVCAN_STM32_TIMER_PPS_CHANNEL == 4)
+            handlePPSInterrupt(utc);
+        if (ext_evt_channels & EXT_EVENT_CH4)
+            handleExternalEvent(4, utc);
+    }
 
     if (TIMX->SR & TIM_SR_UIF) {
         time_mono += USecPerOverflow;

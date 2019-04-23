@@ -7,6 +7,8 @@
 #include <uavcan_stm32/build_config.hpp>
 #include <uavcan/driver/system_clock.hpp>
 
+#include <ch.h>
+
 namespace uavcan_stm32
 {
 
@@ -101,6 +103,28 @@ void setUtcSyncParams(const UtcSyncParams& params);
  * This function is thread safe.
  */
 void setUtcNextPPS(uavcan::uint64_t time);
+
+enum ExternalEventChannels : uint8_t
+{
+    EXT_EVENT_NONE  = 0,
+    EXT_EVENT_CH1   = 1 << 0,
+    EXT_EVENT_CH2   = 1 << 1,
+    EXT_EVENT_CH3   = 1 << 2,
+    EXT_EVENT_CH4   = 1 << 3,
+};
+
+inline ExternalEventChannels operator|(ExternalEventChannels lhs, ExternalEventChannels rhs) {
+    return (ExternalEventChannels)((int)lhs|(int)rhs);
+}
+
+struct ExternalEvent
+{
+    uint64_t utc;
+    uint8_t channel;
+};
+
+void setExternalEventChannels(ExternalEventChannels channels);
+bool fetchExternalEvent(ExternalEvent*evt, sysinterval_t timeout);
 
 }
 
