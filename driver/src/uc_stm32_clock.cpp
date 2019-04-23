@@ -46,7 +46,11 @@
 #  error "This UAVCAN_STM32_TIMER_NUMBER is not supported yet"
 # endif
 
-#define PPS_CHANNEL_MASK (ExternalEventChannels)(1 << (UAVCAN_STM32_TIMER_PPS_CHANNEL-1))
+# if UAVCAN_STM32_TIMER_PPS_CHANNEL
+#  define PPS_CHANNEL_MASK (ExternalEventChannels)(1 << (UAVCAN_STM32_TIMER_PPS_CHANNEL-1))
+# else
+#  define PPS_CHANNEL_MASK EXT_EVENT_NONE
+# endif
 
 // CH1
 # define TIM_CH1_DIER_CCXIE TIM_DIER_CC1IE
