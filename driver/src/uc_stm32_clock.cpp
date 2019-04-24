@@ -552,7 +552,7 @@ void handleExternalEvent(uint8_t channel, uavcan::uint64_t time)
 
     ExternalEvent* evt = (ExternalEvent*)chFifoTakeObjectI(&ext_evt_fifo);
 
-    if (evt) {
+    if (utc_locked && evt) {
         evt->utc = time;
         evt->channel = channel;
 
