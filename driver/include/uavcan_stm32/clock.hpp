@@ -108,11 +108,12 @@ void setUtcNextPPS(uavcan::uint64_t time);
 
 enum ExternalEventChannels : uint8_t
 {
-    EXT_EVENT_NONE  = 0,
-    EXT_EVENT_CH1   = 1 << 0,
-    EXT_EVENT_CH2   = 1 << 1,
-    EXT_EVENT_CH3   = 1 << 2,
-    EXT_EVENT_CH4   = 1 << 3,
+    EXT_EVENT_NONE      = 0,
+    EXT_EVENT_CH1       = 1 << 0,
+    EXT_EVENT_CH2       = 1 << 1,
+    EXT_EVENT_CH3       = 1 << 2,
+    EXT_EVENT_CH4       = 1 << 3,
+    EXT_EVENT_COUNT     = 4,
 };
 
 inline ExternalEventChannels operator|(ExternalEventChannels lhs, ExternalEventChannels rhs) {
@@ -123,6 +124,7 @@ struct ExternalEvent
 {
     uint64_t utc;
     uint8_t channel;
+    uint32_t id;
 };
 
 void setExternalEventChannels(ExternalEventChannels channels);

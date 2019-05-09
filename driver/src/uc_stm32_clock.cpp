@@ -129,6 +129,7 @@ ExternalEventChannels ext_evt_channels = EXT_EVENT_NONE;
 objects_fifo_t ext_evt_fifo;
 ExternalEvent ext_evt_fifo_buf[UAVCAN_STM32_EXTERNAL_EVENT_BUFFER_SIZE];
 msg_t ext_evt_fifo_msg[UAVCAN_STM32_EXTERNAL_EVENT_BUFFER_SIZE];
+uint32_t ext_evt_id[EXT_EVENT_COUNT]; // Autoincrement counters
 
 }
 
@@ -227,6 +228,7 @@ void init()
 
     // enable input capture
     initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK);
+    memset(ext_evt_id, 0, sizeof(ext_evt_id)); // Reset autoincrement counters
 
     TIMX->CR1  = TIM_CR1_CEN;    // Start
 
@@ -555,10 +557,14 @@ void handleExternalEvent(uint8_t channel, uavcan::uint64_t time)
     if (utc_locked && evt) {
         evt->utc = time;
         evt->channel = channel;
+        evt->id = ext_evt_id[channel];
 
         // Send for processing
         chFifoSendObjectI(&ext_evt_fifo, evt);
     }
+
+    // Increment id even if FIFO is full or clock is not synced
+    ext_evt_id[channel]++;
 
     chSysUnlockFromISR();
 }
