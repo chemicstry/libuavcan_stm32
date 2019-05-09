@@ -94,6 +94,12 @@ uavcan::uint32_t getUtcJumpCount();
 bool isUtcLocked();
 
 /**
+ * Returns usec error between time master and internal utc clock
+ * This function is thread safe.
+ */
+uavcan::int64_t getUtcSyncError();
+
+/**
  * UTC sync params get/set.
  * Both functions are thread safe.
  */

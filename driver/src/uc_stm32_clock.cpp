@@ -123,6 +123,7 @@ uavcan::uint64_t prev_utc_adj_at;
 uavcan::uint64_t time_mono = 0;
 uavcan::uint64_t time_utc = 0;
 uavcan::uint64_t time_utc_next_pps = 0; // UTC time of the next PPS impulse
+uavcan::int64_t time_utc_error = 0; // Time difference between time master and internal clock
 
 // External events
 ExternalEventChannels ext_evt_channels = EXT_EVENT_NONE;
@@ -496,6 +497,12 @@ bool isUtcLocked()
     return utc_locked;
 }
 
+uavcan::int64_t getUtcSyncError()
+{
+    MutexLocker mlocker(mutex);
+    return time_utc_error;
+}
+
 UtcSyncParams getUtcSyncParams()
 {
     MutexLocker mlocker(mutex);
@@ -543,7 +550,8 @@ void handlePPSInterrupt(uavcan::uint64_t pps_time)
     if (time_utc_next_pps)
     {
         uavcan::uint64_t mono_us = sampleMonotonicFromCriticalSection();
-        adjustUtcFromCriticalSection(mono_us, time_utc_next_pps - pps_time);
+        time_utc_error = time_utc_next_pps - pps_time;
+        adjustUtcFromCriticalSection(mono_us, time_utc_error);
         time_utc_next_pps = 0;
     }
 }
