@@ -278,7 +278,7 @@ void setUtc(uavcan::UtcTime time)
     utc_rel_rate_ppm = 0;
 }
 
-static uavcan::uint64_t sampleUtcFromCriticalSection()
+uavcan::uint64_t sampleUtcFromCriticalSection()
 {
 # if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL || UAVCAN_STM32_FREERTOS
     UAVCAN_ASSERT(initialized);
@@ -321,7 +321,7 @@ uavcan::uint64_t getUtcUSecFromCanInterrupt()
     return utc_set ? sampleUtcFromCriticalSection() : 0;
 }
 
-static uavcan::uint64_t sampleMonotonicFromCriticalSection()
+uavcan::uint64_t sampleMonotonicFromCriticalSection()
 {
     volatile uavcan::uint64_t time = time_mono;
 

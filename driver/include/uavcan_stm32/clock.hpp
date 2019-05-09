@@ -24,6 +24,7 @@ void init();
  * Returns current monotonic time since the moment when clock::init() was called.
  * This function is thread safe.
  */
+uavcan::uint64_t sampleMonotonicFromCriticalSection();
 uavcan::MonotonicTime getMonotonic();
 
 /**
@@ -38,6 +39,7 @@ void setUtc(uavcan::UtcTime time);
  * Returns UTC time if it has been set, otherwise returns zero time.
  * This function is thread safe.
  */
+uavcan::uint64_t sampleUtcFromCriticalSection();
 uavcan::UtcTime getUtc();
 
 /**
