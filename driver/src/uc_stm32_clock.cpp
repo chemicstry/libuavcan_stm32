@@ -557,14 +557,14 @@ void handleExternalEvent(uint8_t channel, uavcan::uint64_t time)
     if (utc_locked && evt) {
         evt->utc = time;
         evt->channel = channel;
-        evt->id = ext_evt_id[channel];
+        evt->id = ext_evt_id[channel-1];
 
         // Send for processing
         chFifoSendObjectI(&ext_evt_fifo, evt);
     }
 
     // Increment id even if FIFO is full or clock is not synced
-    ext_evt_id[channel]++;
+    ext_evt_id[channel-1]++;
 
     chSysUnlockFromISR();
 }
