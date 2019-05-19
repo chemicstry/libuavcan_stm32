@@ -155,19 +155,22 @@ static void nvicEnableVector(IRQn_Type irq,  uint8_t prio)
 #endif
 
 // Initializes timer input capture based on channel mask
-void initExternalChannels(ExternalEventChannels channels)
+void initExternalChannels(ExternalEventChannels channels, ExternalEventChannels polarity)
 {
     // Reset
     TIMX->DIER &= ~(TIM_CH1_DIER_CCXIE|TIM_CH2_DIER_CCXIE|TIM_CH3_DIER_CCXIE|TIM_CH4_DIER_CCXIE);
     TIMX->CCMR1 &= ~(TIM_CH1_CCMR1|TIM_CH2_CCMR1|TIM_CH3_CCMR1|TIM_CH4_CCMR1);
     TIMX->CCMR2 &= ~(TIM_CH1_CCMR2|TIM_CH2_CCMR2|TIM_CH3_CCMR2|TIM_CH4_CCMR2);
-    TIMX->CCER &= ~(TIM_CH1_CCER|TIM_CH2_CCER|TIM_CH3_CCER|TIM_CH4_CCER);
+    TIMX->CCER &= ~(TIM_CH1_CCER|TIM_CH2_CCER|TIM_CH3_CCER|TIM_CH4_CCER|TIM_CCER_CC1P|TIM_CCER_CC2P|TIM_CCER_CC3P|TIM_CCER_CC4P);
 
     if (channels & EXT_EVENT_CH1) {
         TIMX->DIER |= TIM_CH1_DIER_CCXIE;
         TIMX->CCMR1 |= TIM_CH1_CCMR1;
         TIMX->CCMR2 |= TIM_CH1_CCMR2;
         TIMX->CCER |= TIM_CH1_CCER;
+
+        if (polarity & EXT_EVENT_CH1)
+            TIMX->CCER |= TIM_CCER_CC1P;
     }
 
     if (channels & EXT_EVENT_CH2) {
@@ -175,6 +178,9 @@ void initExternalChannels(ExternalEventChannels channels)
         TIMX->CCMR1 |= TIM_CH2_CCMR1;
         TIMX->CCMR2 |= TIM_CH2_CCMR2;
         TIMX->CCER |= TIM_CH2_CCER;
+
+        if (polarity & EXT_EVENT_CH2)
+            TIMX->CCER |= TIM_CCER_CC2P;
     }
 
     if (channels & EXT_EVENT_CH3) {
@@ -182,6 +188,9 @@ void initExternalChannels(ExternalEventChannels channels)
         TIMX->CCMR1 |= TIM_CH3_CCMR1;
         TIMX->CCMR2 |= TIM_CH3_CCMR2;
         TIMX->CCER |= TIM_CH3_CCER;
+
+        if (polarity & EXT_EVENT_CH3)
+            TIMX->CCER |= TIM_CCER_CC3P;
     }
 
     if (channels & EXT_EVENT_CH4) {
@@ -189,6 +198,9 @@ void initExternalChannels(ExternalEventChannels channels)
         TIMX->CCMR1 |= TIM_CH4_CCMR1;
         TIMX->CCMR2 |= TIM_CH4_CCMR2;
         TIMX->CCER |= TIM_CH4_CCER;
+
+        if (polarity & EXT_EVENT_CH4)
+            TIMX->CCER |= TIM_CCER_CC4P;
     }
 }
 
@@ -228,7 +240,7 @@ void init()
     TIMX->DIER = TIM_DIER_UIE; // Enable update and input capture interrupts
 
     // enable input capture
-    initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK);
+    initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK, EXT_EVENT_NONE);
     memset(ext_evt_id, 0, sizeof(ext_evt_id)); // Reset autoincrement counters
 
     TIMX->CR1  = TIM_CR1_CEN;    // Start
@@ -440,6 +452,8 @@ static void adjustUtcFromCriticalSection(uavcan::uint64_t ts, uavcan::int64_t ad
 {
     UAVCAN_ASSERT(initialized);
 
+    time_utc_error = adj_usec;
+
     if (std::abs(adj_usec) > utc_sync_params.min_jump.toUSec() || !utc_set)
     {
         if ((adj_usec < 0) && uavcan::uint64_t(-adj_usec) > time_utc)
@@ -522,10 +536,13 @@ void setUtcNextPPS(uavcan::uint64_t time)
     time_utc_next_pps = time;
 }
 
-void setExternalEventChannels(ExternalEventChannels channels)
+void setExternalEventChannels(ExternalEventChannels channels, ExternalEventChannels polarity)
 {
+    if (channels > EXT_EVENT_MAX || polarity > EXT_EVENT_MAX)
+        return;
+
     ext_evt_channels = channels;
-    initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK);
+    initExternalChannels(ext_evt_channels|PPS_CHANNEL_MASK, polarity);
 }
 
 bool fetchExternalEvent(ExternalEvent *evt, sysinterval_t timeout)
@@ -550,8 +567,7 @@ void handlePPSInterrupt(uavcan::uint64_t pps_time)
     if (time_utc_next_pps)
     {
         uavcan::uint64_t mono_us = sampleMonotonicFromCriticalSection();
-        time_utc_error = time_utc_next_pps - pps_time;
-        adjustUtcFromCriticalSection(mono_us, time_utc_error);
+        adjustUtcFromCriticalSection(mono_us, time_utc_next_pps - pps_time);
         time_utc_next_pps = 0;
     }
 }

@@ -119,6 +119,7 @@ enum ExternalEventChannels : uint8_t
     EXT_EVENT_CH2       = 1 << 1,
     EXT_EVENT_CH3       = 1 << 2,
     EXT_EVENT_CH4       = 1 << 3,
+    EXT_EVENT_MAX       = EXT_EVENT_CH4,
     EXT_EVENT_COUNT     = 4,
 };
 
@@ -133,7 +134,7 @@ struct ExternalEvent
     uint32_t id;
 };
 
-void setExternalEventChannels(ExternalEventChannels channels);
+void setExternalEventChannels(ExternalEventChannels channels, ExternalEventChannels polarity);
 bool fetchExternalEvent(ExternalEvent*evt, sysinterval_t timeout);
 
 }
