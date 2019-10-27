@@ -119,7 +119,7 @@ enum ExternalEventChannels : uint8_t
     EXT_EVENT_CH2       = 1 << 1,
     EXT_EVENT_CH3       = 1 << 2,
     EXT_EVENT_CH4       = 1 << 3,
-    EXT_EVENT_MAX       = EXT_EVENT_CH4,
+    EXT_EVENT_MAX_MASK  = 0b1111,
     EXT_EVENT_COUNT     = 4,
 };
 

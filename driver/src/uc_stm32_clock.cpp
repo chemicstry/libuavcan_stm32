@@ -538,7 +538,7 @@ void setUtcNextPPS(uavcan::uint64_t time)
 
 void setExternalEventChannels(ExternalEventChannels channels, ExternalEventChannels polarity)
 {
-    if (channels > EXT_EVENT_MAX || polarity > EXT_EVENT_MAX)
+    if (channels > EXT_EVENT_MAX_MASK || polarity > EXT_EVENT_MAX_MASK)
         return;
 
     ext_evt_channels = channels;
@@ -576,15 +576,17 @@ void handleExternalEvent(uint8_t channel, uavcan::uint64_t time)
 {
     chSysLockFromISR();
 
-    ExternalEvent* evt = (ExternalEvent*)chFifoTakeObjectI(&ext_evt_fifo);
+    if (utc_locked) {
+        ExternalEvent* evt = (ExternalEvent*)chFifoTakeObjectI(&ext_evt_fifo);
 
-    if (utc_locked && evt) {
-        evt->utc = time;
-        evt->channel = channel;
-        evt->id = ext_evt_id[channel-1];
+        if (evt) {
+            evt->utc = time;
+            evt->channel = channel;
+            evt->id = ext_evt_id[channel-1];
 
-        // Send for processing
-        chFifoSendObjectI(&ext_evt_fifo, evt);
+            // Send for processing
+            chFifoSendObjectI(&ext_evt_fifo, evt);
+        }
     }
 
     // Increment id even if FIFO is full or clock is not synced
